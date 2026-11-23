@@ -29,10 +29,10 @@ async function loadOptions(search: string) {
   loading.value = true
   try {
     if (props.kind === 'USER') {
-      const res = await api.directory.listUsers({ search, pageSize: 15 })
+      const res = await api.directory.listUsers({ search, pageSize: 50 })
       users.value = res.data
     } else {
-      const res = await api.directory.listGroups({ search, pageSize: 15 })
+      const res = await api.directory.listGroups({ search, pageSize: 50 })
       groups.value = res.data
     }
   } catch {
@@ -186,11 +186,11 @@ function handleBlur() {
             class="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs hover:bg-slate-100"
             @mousedown.prevent="pickItem(g.name)"
           >
-            <div>
+            <div class="min-w-0 truncate">
               <span class="font-semibold text-slate-900">{{ g.name }}</span>
               <span v-if="g.description" class="ml-1.5 text-slate-500">— {{ g.description }}</span>
             </div>
-            <span class="text-[11px] text-slate-500">{{ g.memberCount }}</span>
+            <span class="shrink-0 pl-2 text-[11px] font-medium text-slate-500">{{ g.memberCount }}</span>
           </button>
         </li>
       </template>

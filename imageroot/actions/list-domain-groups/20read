@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+
+import json
+import os
+import sys
+from agent.ldapproxy import Ldapproxy
+
+ADMIN_CANDIDATE_EXACT = {
+    "domain admins",
+    "domänen-admins",
+    "domaenen-admins",
+    "enterprise admins",
+    "organisations-admins",
+    "schema admins",
+    "administrators",
+    "administratoren",
+    "admins",
+    "it-admins",
+    "it",
+    "edv",
+    "wheel",
+    "sudo",
+}
+
+
+def is_admin_candidate(group_name: str) -> bool:
+    low = (group_name or "").strip().lower()
+    if not low:
+        return False
+    if low in ADMIN_CANDIDATE_EXACT:
+        return True
+    return "admin" in low
+
+
+def normalize_groups(raw_groups: list) -> list[dict]:
+    seen: set[str] = set()
+    items: list[dict] = []
+
+    for entry in raw_groups or []:
+        if isinstance(entry, str):
+            name = entry.strip()
+            desc = ""
+            users: list[str] = []
+        elif isinstance(entry, dict):
+            name = str(entry.get("group") or entry.get("name") or entry.get("cn") or "").strip()
+            desc = str(entry.get("description") or "").strip()
+            raw_users = entry.get("users") or entry.get("members") or []
+            if isinstance(raw_users, (list, tuple, set)):
+                users = [str(u).strip() for u in raw_users if str(u).strip()]
+            else:
+                users = []
+        else:
+            continue
+
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+
+        candidate = is_admin_candidate(name)
+        items.append(
+            {
+                "group": name,
+                "description": desc,
+                "user_count": len(users),
+                "users": users[:10],
+                "is_admin_candidate": candidate,
+            }
+        )
+
+    items.sort(key=lambda g: (0 if g["is_admin_candidate"] else 1, g["group"].lower()))
+    return items
+
+
+try:
+    raw_stdin = sys.stdin.read().strip()
+    req = json.loads(raw_stdin) if raw_stdin else {}
+except Exception:
+    req = {}
+
+domain = str(req.get("domain") or os.environ.get("LDAP_DOMAIN") or "").strip()
+
+if not domain:
+    json.dump(
+        {
+            "domain": "",
+            "schema": "",
+            "base_dn": "",
+            "groups": [],
+            "error": None,
+        },
+        fp=sys.stdout,
+    )
+    sys.exit(0)
+
+lp = Ldapproxy()
+try:
+    domparams = lp.get_domain(domain)
+except Exception as exc:
+    json.dump(
+        {
+            "domain": domain,
+            "schema": "",
+            "base_dn": "",
+            "groups": [],
+            "error": f"user_domain_not_found: {exc}",
+        },
+        fp=sys.stdout,
+    )
+    sys.exit(0)
+
+if not domparams:
+    json.dump(
+        {
+            "domain": domain,
+            "schema": "",
+            "base_dn": "",
+            "groups": [],
+            "error": "user_domain_not_found",
+        },
+        fp=sys.stdout,
+    )
+    sys.exit(0)
+
+schema = str(domparams.get("schema") or "")
+base_dn = str(domparams.get("base_dn") or "")
+
+try:
+    from agent.ldapclient import Ldapclient
+
+    raw_list = Ldapclient.factory(**domparams).list_groups()
+    groups = normalize_groups(raw_list)
+    err_msg = None
+except Exception as exc:
+    groups = []
+    err_msg = f"ldap_query_failed: {exc.__class__.__name__}: {exc}"
+
+json.dump(
+    {
+        "domain": domain,
+        "schema": schema,
+        "base_dn": base_dn,
+        "groups": groups,
+        "error": err_msg,
+    },
+    fp=sys.stdout,
+)

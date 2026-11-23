@@ -5,11 +5,71 @@ import os
 import sys
 from agent.ldapproxy import Ldapproxy
 
+ADMIN_CANDIDATE_EXACT = {
+    "domain admins",
+    "domänen-admins",
+    "domaenen-admins",
+    "enterprise admins",
+    "organisations-admins",
+    "schema admins",
+    "administrators",
+    "administratoren",
+    "admins",
+    "it-admins",
+    "it",
+    "edv",
+    "wheel",
+    "sudo",
+}
+
 
 def str_to_bool(value: str, default: bool = False) -> bool:
     if value is None or value == "":
         return default
     return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def is_admin_candidate(group_name: str) -> bool:
+    low = (group_name or "").strip().lower()
+    if not low:
+        return False
+    return low in ADMIN_CANDIDATE_EXACT or "admin" in low
+
+
+def discover_groups_safe(lp: Ldapproxy, domain_name: str) -> list[dict]:
+    if not domain_name:
+        return []
+    try:
+        from agent.ldapclient import Ldapclient
+
+        domparams = lp.get_domain(domain_name)
+        if not domparams:
+            return []
+        raw_groups = Ldapclient.factory(**domparams).list_groups()
+        seen: set[str] = set()
+        items: list[dict] = []
+        for entry in raw_groups or []:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("group") or entry.get("name") or "").strip()
+            if not name or name.lower() in seen:
+                continue
+            seen.add(name.lower())
+            raw_users = entry.get("users") or []
+            users = [str(u).strip() for u in raw_users if str(u).strip()] if isinstance(raw_users, list) else []
+            items.append(
+                {
+                    "group": name,
+                    "description": str(entry.get("description") or "").strip(),
+                    "user_count": len(users),
+                    "users": users[:10],
+                    "is_admin_candidate": is_admin_candidate(name),
+                }
+            )
+        items.sort(key=lambda g: (0 if g["is_admin_candidate"] else 1, g["group"].lower()))
+        return items
+    except Exception:
+        return []
 
 
 host = os.environ.get("TRAEFIK_HOST", "")
@@ -25,7 +85,25 @@ if not app_url and host:
     scheme = "https" if (http2https or lets_encrypt) else "http"
     app_url = f"{scheme}://{host}"
 
-user_domains = Ldapproxy().get_domains_list()
+lp = Ldapproxy()
+raw_domains = lp.get_domains_list()
+user_domains = []
+for dom_entry in raw_domains or []:
+    dom_name = dom_entry.get("name", "") if isinstance(dom_entry, dict) else str(dom_entry)
+    dom_name = dom_name.strip()
+    if not dom_name:
+        continue
+    dom_schema = ""
+    try:
+        info = lp.get_domain(dom_name)
+        if isinstance(info, dict):
+            dom_schema = str(info.get("schema") or "")
+    except Exception:
+        dom_schema = ""
+    user_domains.append({"name": dom_name, "schema": dom_schema})
+
+target_discovery_domain = ldap_domain or (user_domains[0]["name"] if len(user_domains) == 1 else "")
+discovered_groups = discover_groups_safe(lp, target_discovery_domain)
 
 config = {
     "host": host,
@@ -38,6 +116,7 @@ config = {
     "bootstrap_admin_password_configured": bool(os.environ.get("BOOTSTRAP_ADMIN_PASSWORD_HASH", "")),
     "app_url": app_url,
     "user_domains": user_domains,
+    "discovered_groups": discovered_groups,
 }
 
 json.dump(config, fp=sys.stdout)

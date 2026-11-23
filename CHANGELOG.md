@@ -5,6 +5,14 @@ All notable changes to **NS8-AdvancedPolicyManager** will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-11-23
+
+### Added
+- **Live LDAP/AD Group Discovery in NS8 Cockpit Settings (`list-domain-groups` & `Settings.vue`):** Replaced manual comma-separated group text entry with live NS8 `ldapproxy` / `Ldapclient` group discovery, searchable Carbon `NsMultiSelect` tags (displaying group member counts and descriptions), automatic domain schema badges (`Samba AD` / `OpenLDAP`), a manual group refresh trigger, and 1-click quick-add chips for detected administrative groups (such as `Domain Admins`, `IT-Admins`, `admins`).
+
+### Improved
+- **Samba AD Primary Group & LDAPS Proxy Handling (`directory-auth`):** Added automatic resolution of Active Directory well-known `primaryGroupID` RIDs (`512` `Domain Admins`, `513` `Domain Users`) and streamlined TLS socket setup for custom-port `ldapproxy` endpoints.
+
 ## [1.0.0] - 2026-11-23
 
 ### Added

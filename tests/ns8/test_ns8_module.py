@@ -73,12 +73,13 @@ class MockNs8Env:
         self.ldapproxy_get_domains_called = 0
         self.ldapproxy_get_domain_calls: list[str] = []
 
-    def build_modules(self) -> tuple[types.ModuleType, types.ModuleType, types.ModuleType]:
+    def build_modules(self) -> tuple[types.ModuleType, types.ModuleType, types.ModuleType, types.ModuleType]:
         env_self = self
 
         agent_mod = types.ModuleType("agent")
         tasks_mod = types.ModuleType("agent.tasks")
         ldapproxy_mod = types.ModuleType("agent.ldapproxy")
+        ldapclient_mod = types.ModuleType("agent.ldapclient")
 
         def set_env(key: str, value: str) -> None:
             env_self.call_log.append(f"set_env:{key}")
@@ -132,6 +133,28 @@ class MockNs8Env:
         tasks_mod.run = tasks_run
         ldapproxy_mod.Ldapproxy = Ldapproxy
 
+        class Ldapclient:
+            def __init__(self, **domparams: Any) -> None:
+                self.domparams = domparams
+
+            @classmethod
+            def factory(cls, **domparams: Any) -> "Ldapclient":
+                return cls(**domparams)
+
+            def list_groups(self) -> list[dict[str, Any]]:
+                if self.domparams.get("schema") == "rfc2307":
+                    return [
+                        {"group": "buchhaltung", "description": "Accounting", "users": ["m.mueller"]},
+                        {"group": "admins", "description": "LDAP Admins", "users": ["admin1", "admin2"]},
+                    ]
+                return [
+                    {"group": "Buchhaltung", "description": "Finanzabteilung", "users": ["m.mueller"]},
+                    {"group": "Domain Admins", "description": "Designated administrators of the domain", "users": ["administrator"]},
+                    {"group": "IT-Admins", "description": "IT Operations", "users": ["administrator", "s.weber"]},
+                ]
+
+        ldapclient_mod.Ldapclient = Ldapclient
+
         agent_mod.set_env = set_env
         agent_mod.dump_env = dump_env
         agent_mod.set_status = set_status
@@ -141,8 +164,9 @@ class MockNs8Env:
         agent_mod.assert_exp = assert_exp
         agent_mod.tasks = tasks_mod
         agent_mod.ldapproxy = ldapproxy_mod
+        agent_mod.ldapclient = ldapclient_mod
 
-        return agent_mod, tasks_mod, ldapproxy_mod
+        return agent_mod, tasks_mod, ldapproxy_mod, ldapclient_mod
 
 
 def run_imageroot_script(
@@ -157,10 +181,11 @@ def run_imageroot_script(
     script_path = IMAGEROOT / rel_path
     assert script_path.is_file(), f"Missing script: {script_path}"
 
-    agent_mod, tasks_mod, ldapproxy_mod = mock_ns8.build_modules()
+    agent_mod, tasks_mod, ldapproxy_mod, ldapclient_mod = mock_ns8.build_modules()
     monkeypatch.setitem(sys.modules, "agent", agent_mod)
     monkeypatch.setitem(sys.modules, "agent.tasks", tasks_mod)
     monkeypatch.setitem(sys.modules, "agent.ldapproxy", ldapproxy_mod)
+    monkeypatch.setitem(sys.modules, "agent.ldapclient", ldapclient_mod)
 
     # Isolate relevant environment variables
     managed_prefixes = ("APM_", "LDAP_", "TRAEFIK_", "BOOTSTRAP_", "JWT_", "ADMIN_GROUPS", "TCP_PORT", "MODULE_ID", "ADVANCEDPOLICYMANAGER_")
@@ -405,7 +430,64 @@ def test_get_configuration_20read(monkeypatch: pytest.MonkeyPatch) -> None:
     assert payload["bootstrap_admin_enabled"] is True
     assert payload["bootstrap_admin_username"] == "emergency-admin"
     assert payload["app_url"] == "https://policies.example.org"
-    assert payload["user_domains"] == ["ad.example.org", "ldap.example.org"]
+    assert payload["user_domains"] == [
+        {"name": "ad.example.org", "schema": "ad"},
+        {"name": "ldap.example.org", "schema": "rfc2307"},
+    ]
+    assert [g["group"] for g in payload["discovered_groups"]] == [
+        "Domain Admins",
+        "IT-Admins",
+        "Buchhaltung",
+    ]
+
+
+def test_list_domain_groups_20read(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_ns8 = MockNs8Env(initial_env={"LDAP_DOMAIN": "ad.example.org"})
+
+    # 1. Explicit Samba AD domain query sorts admin candidates first
+    stdout_ad, code_ad = run_imageroot_script(
+        monkeypatch,
+        "actions/list-domain-groups/20read",
+        mock_ns8,
+        stdin_data={"domain": "ad.example.org"},
+    )
+    assert code_ad == 0
+    res_ad = json.loads(stdout_ad)
+    assert res_ad["domain"] == "ad.example.org"
+    assert res_ad["schema"] == "ad"
+    assert res_ad["error"] is None
+    assert [g["group"] for g in res_ad["groups"]] == [
+        "Domain Admins",
+        "IT-Admins",
+        "Buchhaltung",
+    ]
+    assert res_ad["groups"][0]["is_admin_candidate"] is True
+    assert res_ad["groups"][0]["user_count"] == 1
+    assert res_ad["groups"][2]["is_admin_candidate"] is False
+
+    # 2. OpenLDAP domain query
+    stdout_ldap, code_ldap = run_imageroot_script(
+        monkeypatch,
+        "actions/list-domain-groups/20read",
+        mock_ns8,
+        stdin_data={"domain": "ldap.example.org"},
+    )
+    assert code_ldap == 0
+    res_ldap = json.loads(stdout_ldap)
+    assert res_ldap["schema"] == "rfc2307"
+    assert [g["group"] for g in res_ldap["groups"]] == ["admins", "buchhaltung"]
+
+    # 3. Unknown domain returns structured error without crashing
+    stdout_err, code_err = run_imageroot_script(
+        monkeypatch,
+        "actions/list-domain-groups/20read",
+        mock_ns8,
+        stdin_data={"domain": "missing.example.org"},
+    )
+    assert code_err == 0
+    res_err = json.loads(stdout_err)
+    assert res_err["groups"] == []
+    assert "user_domain_not_found" in str(res_err["error"])
 
 
 def test_configure_module_01hostname_validation_collision_exits_2(

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import ssl
 from typing import Any, Callable
 
-from ldap3 import Connection, Server, SUBTREE, Tls
+from ldap3 import Connection, NONE, Server, SUBTREE, Tls
 from ldap3.core.exceptions import LDAPBindError, LDAPException, LDAPSocketOpenError
 from ldap3.utils.conv import escape_filter_chars
 from ldap3.utils.dn import parse_dn
@@ -18,6 +19,12 @@ from app.directory.base import (
 )
 
 AD_MATCHING_RULE_IN_CHAIN = "1.2.840.113556.1.4.1941"
+AD_WELL_KNOWN_PRIMARY_GROUP_RIDS = {
+    "512": "Domain Admins",
+    "513": "Domain Users",
+    "514": "Domain Guests",
+    "515": "Domain Computers",
+}
 
 
 def extract_cn_from_dn(dn: str) -> str:
@@ -109,13 +116,14 @@ class Ldap3DirectoryProvider(DirectoryProvider):
     def _build_server(self) -> Any:
         if not self.host:
             raise DirectoryUnavailableError("LDAP_HOST ist nicht konfiguriert")
-        use_ssl = self.use_tls and self.port == 636
-        tls_cfg = Tls() if self.use_tls else None
+        use_ssl = bool(self.use_tls)
+        tls_cfg = Tls(validate=ssl.CERT_NONE) if use_ssl else None
         return self._server_factory(
             self.host,
             port=self.port,
             use_ssl=use_ssl,
             tls=tls_cfg,
+            get_info=NONE,
             connect_timeout=5,
         )
 
@@ -131,8 +139,6 @@ class Ldap3DirectoryProvider(DirectoryProvider):
                 )
             else:
                 conn = self._connection_factory(server, auto_bind=True)
-            if self.use_tls and self.port != 636 and hasattr(conn, "start_tls"):
-                conn.start_tls()
             return conn
         except (LDAPSocketOpenError, LDAPBindError, LDAPException, OSError) as exc:
             raise DirectoryUnavailableError(
@@ -245,6 +251,7 @@ class Ldap3DirectoryProvider(DirectoryProvider):
                 "displayName",
                 "mail",
                 "memberOf",
+                "primaryGroupID",
                 "distinguishedName",
             ]
         else:
@@ -284,6 +291,11 @@ class Ldap3DirectoryProvider(DirectoryProvider):
             email = _entry_str(attrs, "mail") or _entry_str(attrs, "userPrincipalName")
             member_of = _entry_list(attrs, "memberOf")
             groups = self._resolve_ad_groups(conn, dn, member_of)
+            primary_rid = _entry_str(attrs, "primaryGroupID").strip()
+            if primary_rid in AD_WELL_KNOWN_PRIMARY_GROUP_RIDS:
+                groups = self._dedupe_preserve_order(
+                    [*groups, AD_WELL_KNOWN_PRIMARY_GROUP_RIDS[primary_rid]]
+                )
         else:
             resolved_username = (
                 _entry_str(attrs, "uid")
@@ -331,8 +343,6 @@ class Ldap3DirectoryProvider(DirectoryProvider):
                 password=password,
                 auto_bind=False,
             )
-            if self.use_tls and self.port != 636 and hasattr(user_conn, "start_tls"):
-                user_conn.start_tls()
             bound = bool(user_conn.bind())
             try:
                 user_conn.unbind()
