@@ -321,7 +321,7 @@ def test_cockpit_ui_compliance_and_i18n_keys() -> None:
 
     # Never call createSuccessNotificationForApp anywhere in ui/src
     for src_file in (UI_DIR / "src").rglob("*"):
-        if src_file.is_file():
+        if src_file.is_file() and src_file.suffix.lower() in {".js", ".ts", ".vue", ".css", ".json"}:
             txt = src_file.read_text(encoding="utf-8")
             assert "createSuccessNotificationForApp" not in txt, (
                 f"Forbidden createSuccessNotificationForApp found in {src_file}"

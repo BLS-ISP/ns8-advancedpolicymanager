@@ -1,23 +1,26 @@
 {
-  "name": "Advanced Policy Manager",
+  "name": "AdvancedPolicyManager",
+  "upstream_name": "NS8 AdvancedPolicyManager",
   "description": {
-    "en": "Centralized policy and configuration management for Windows, Linux, and macOS endpoints with Samba AD and OpenLDAP integration",
-    "de": "Zentrale Richtlinien- und Konfigurationsverwaltung für Windows-, Linux- und macOS-Endgeräte mit Samba-AD- und OpenLDAP-Integration"
+    "en": "Central policy, privilege, and workstation configuration manager for Windows, Linux, and macOS with NS8 Samba AD and OpenLDAP integration",
+    "de": "Zentrale Richtlinien-, Berechtigungs- und Arbeitsplatz-Verwaltung für Windows, Linux und macOS mit NS8 Samba-AD- und OpenLDAP-Integration"
   },
   "categories": [
     "security",
-    "system_administration"
+    "monitoring"
   ],
   "authors": [
     {
-      "name": "NethServer Community",
-      "email": "info@nethserver.org"
+      "name": "BLS-ISP",
+      "email": "info@bls-isp.de"
     }
   ],
   "docs": {
-    "documentation_url": "https://docs.nethserver.org",
-    "bug_url": "https://github.com/NethServer/dev",
-    "code_url": "https://github.com/NethServer/ns8-advancedpolicymanager"
+    "documentation_url": "https://github.com/BLS-ISP/ns8-advancedpolicymanager#readme",
+    "bug_url": "https://github.com/BLS-ISP/ns8-advancedpolicymanager/issues",
+    "code_url": "https://github.com/BLS-ISP/ns8-advancedpolicymanager",
+    "terms_url": "https://github.com/BLS-ISP/ns8-advancedpolicymanager/blob/main/LICENSE",
+    "relnotes_url": "https://github.com/BLS-ISP/ns8-advancedpolicymanager/releases"
   },
-  "source": "ghcr.io/nethserver/advancedpolicymanager"
+  "source": "ghcr.io/bls-isp/advancedpolicymanager"
 }

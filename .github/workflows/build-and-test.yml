@@ -1,0 +1,279 @@
+name: Build, Test & Package NS8-AdvancedPolicyManager
+
+on:
+  push:
+    branches: ["main", "master"]
+    tags: ["v*"]
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  backend-and-ns8-tests:
+    name: FastAPI Backend & NS8 Packaging Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Run NS8 packaging & FastAPI backend pytest suites
+        run: python -m pytest tests/ns8/ backend/tests/ -v
+
+      - name: Validate NS8 imageroot Python AST & strict LF line endings
+        run: |
+          python -m compileall -q imageroot backend/app
+          test ! -d imageroot/actions/get-status
+          python -c "
+          import ast, pathlib
+          targets = (
+              list(pathlib.Path('imageroot').rglob('*'))
+              + list(pathlib.Path('agent/installers').glob('*.sh'))
+              + [
+                  pathlib.Path('build-images.sh'),
+                  pathlib.Path('Containerfile'),
+                  pathlib.Path('Containerfile.app'),
+                  pathlib.Path('.github/workflows/build-and-test.yml'),
+              ]
+          )
+          for path in targets:
+              if path.is_file():
+                  raw = path.read_bytes()
+                  assert b'\r\n' not in raw, f'CRLF detected in {path}'
+                  if raw.startswith(b'#!/usr/bin/env python3'):
+                      ast.parse(raw.decode('utf-8'), filename=str(path))
+          print('All NS8 imageroot & packaging files verified (AST + pure LF)!')
+          "
+
+  web-and-cockpit-ui:
+    name: Policy Web GUI & NS8 Cockpit UI Builds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Typecheck & build Policy Admin Web GUI (web/)
+        run: |
+          npm --prefix web ci
+          npm --prefix web run typecheck
+          npm --prefix web run build
+
+      - name: Build NS8 Cockpit UI (ui/)
+        run: |
+          npm --prefix ui install --legacy-peer-deps
+          npm --prefix ui run build
+
+      - name: Upload built Policy Web SPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+
+  agent-build:
+    name: Cross-Platform Rust Agent (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x86_64
+            os: ubuntu-latest
+            platform: linux
+            artifact_name: agent-linux-x86_64
+          - label: windows-x86_64
+            os: windows-latest
+            platform: windows
+            artifact_name: agent-windows-x86_64
+          - label: macos-universal
+            os: macos-latest
+            platform: macos
+            artifact_name: agent-macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Rust agent unit & desired-state rollback tests
+        run: cargo test --manifest-path agent/Cargo.toml
+
+      - name: Build Linux & Windows release binary
+        if: matrix.platform != 'macos'
+        run: cargo build --release --manifest-path agent/Cargo.toml
+
+      - name: Build macOS release binaries (aarch64 & x86_64)
+        if: matrix.platform == 'macos'
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release --manifest-path agent/Cargo.toml --target aarch64-apple-darwin
+          cargo build --release --manifest-path agent/Cargo.toml --target x86_64-apple-darwin
+          mkdir -p dist-macos/aarch64 dist-macos/x86_64
+          cp agent/target/aarch64-apple-darwin/release/ns8-policy-agent dist-macos/aarch64/ns8-policy-agent
+          cp agent/target/x86_64-apple-darwin/release/ns8-policy-agent dist-macos/x86_64/ns8-policy-agent
+
+      - name: Upload Linux agent binary
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: agent/target/release/ns8-policy-agent
+
+      - name: Upload Windows agent binary
+        if: matrix.platform == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: agent/target/release/ns8-policy-agent.exe
+
+      - name: Upload macOS aarch64 agent binary
+        if: matrix.platform == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-macos-aarch64
+          path: dist-macos/aarch64/ns8-policy-agent
+
+      - name: Upload macOS x86_64 agent binary
+        if: matrix.platform == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-macos-x86_64
+          path: dist-macos/x86_64/ns8-policy-agent
+
+  package-ns8-images:
+    name: Full-Stack E2E, Build & Publish NS8 Images
+    needs: [backend-and-ns8-tests, web-and-cockpit-ui, agent-build]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ghcr-publish-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download built Policy Web SPA
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+
+      - name: Download Linux x86_64 agent binary
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-linux-x86_64
+          path: prebuilt-agents/linux/x86_64
+
+      - name: Download Windows x86_64 agent binary
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-windows-x86_64
+          path: prebuilt-agents/windows/x86_64
+
+      - name: Download macOS aarch64 agent binary
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-macos-aarch64
+          path: prebuilt-agents/macos/aarch64
+
+      - name: Download macOS x86_64 agent binary
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-macos-x86_64
+          path: prebuilt-agents/macos/x86_64
+
+      - name: Stage & verify all 4 native client binaries + run Full-Stack E2E test
+        run: |
+          mkdir -p agent/target/release
+          cp prebuilt-agents/linux/x86_64/ns8-policy-agent agent/target/release/ns8-policy-agent
+          chmod +x prebuilt-agents/linux/x86_64/ns8-policy-agent \
+                   prebuilt-agents/macos/aarch64/ns8-policy-agent \
+                   prebuilt-agents/macos/x86_64/ns8-policy-agent \
+                   agent/target/release/ns8-policy-agent
+          test -f prebuilt-agents/linux/x86_64/ns8-policy-agent
+          test -f prebuilt-agents/windows/x86_64/ns8-policy-agent.exe
+          test -f prebuilt-agents/macos/aarch64/ns8-policy-agent
+          test -f prebuilt-agents/macos/x86_64/ns8-policy-agent
+          ls -lh prebuilt-agents/linux/x86_64/ prebuilt-agents/windows/x86_64/ prebuilt-agents/macos/aarch64/ prebuilt-agents/macos/x86_64/
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          python -m pytest tests/e2e/ -v
+
+      - name: Log in to GitHub Container Registry (GHCR) on push
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Authenticate Podman to GHCR on push
+        if: github.event_name == 'push'
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if command -v podman >/dev/null 2>&1; then
+            printf '%s\n' "${GHCR_TOKEN}" | podman login ghcr.io -u "${GHCR_USER}" --password-stdin
+          fi
+
+      - name: Build NS8 images on pull requests / manual dispatch (no push)
+        if: github.event_name != 'push'
+        env:
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          IMAGETAG: ${{ github.sha }}
+        run: bash ./build-images.sh
+
+      - name: Build & push NS8 images to GHCR on branch push
+        if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          IMAGETAG: ${{ github.ref_name }}
+          TAG_LATEST: "1"
+        run: PUSH=1 bash ./build-images.sh
+
+      - name: Build & push NS8 images to GHCR on version tag (v*)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          RAW_REF_NAME: ${{ github.ref_name }}
+          TAG_LATEST: "1"
+        run: |
+          SEMVER_TAG="${RAW_REF_NAME#v}"
+          IMAGETAG="${SEMVER_TAG}" PUSH=1 bash ./build-images.sh
+
+      - name: Stage uniquely named release assets on version tag (v*)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir -p release-assets
+          cp prebuilt-agents/windows/x86_64/ns8-policy-agent.exe release-assets/ns8-policy-agent-windows-x86_64.exe
+          cp prebuilt-agents/linux/x86_64/ns8-policy-agent release-assets/ns8-policy-agent-linux-x86_64
+          cp prebuilt-agents/macos/aarch64/ns8-policy-agent release-assets/ns8-policy-agent-macos-aarch64
+          cp prebuilt-agents/macos/x86_64/ns8-policy-agent release-assets/ns8-policy-agent-macos-x86_64
+          cp agent/installers/install.ps1 release-assets/install.ps1
+          cp agent/installers/install-linux.sh release-assets/install-linux.sh
+          cp agent/installers/install-macos.sh release-assets/install-macos.sh
+
+      - name: Publish GitHub Release on version tag (v*)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-assets/*

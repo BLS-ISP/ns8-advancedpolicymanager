@@ -62,11 +62,11 @@ cd agent && cargo test && cargo build --release
 ## Container-Images bauen & in NethServer 8 installieren
 
 ```bash
-REPOBASE=ghcr.io/deine-org IMAGETAG=1.0.0 ./build-images.sh
+REPOBASE=ghcr.io/bls-isp IMAGETAG=1.0.0 ./build-images.sh
 ```
 
-Auf dem NethServer-8-Cluster installieren:
+Auf dem NethServer-8-Cluster installieren (entweder direkt über das **BLS-ISP Software-Repository** im NS8 Software Center oder per CLI):
 ```bash
-add-module ghcr.io/deine-org/advancedpolicymanager:1.0.0 1
+add-module ghcr.io/bls-isp/advancedpolicymanager:1.0.0 1
 ```
 Anschließend im **NS8 Cluster-Admin** unter **Einstellungen** der Instanz den gewünschten FQDN (z. B. `policies.firma.de`), die NS8 User Domain (Samba AD oder OpenLDAP) und die berechtigten Admin-Gruppen (z. B. `Domain Admins`) auswählen.

@@ -1,11 +1,11 @@
 #!/bin/bash
 
-set -e
+# Build NS8-AdvancedPolicyManager application and NS8 rootless module images
+set -euo pipefail
 
-REPOBASE="${REPOBASE:-ghcr.io/nethserver}"
+REPOBASE="${REPOBASE:-ghcr.io/${GITHUB_REPOSITORY_OWNER:-bls-isp}}"
+REPOBASE="$(printf '%s' "${REPOBASE}" | tr '[:upper:]' '[:lower:]')"
 IMAGETAG="${IMAGETAG:-latest}"
-APP_IMAGE="${REPOBASE}/advancedpolicymanager-app:${IMAGETAG}"
-MODULE_IMAGE="${REPOBASE}/advancedpolicymanager:${IMAGETAG}"
 
 if command -v podman >/dev/null 2>&1; then
     CONTAINER_ENGINE="${CONTAINER_ENGINE:-podman}"
@@ -13,25 +13,53 @@ else
     CONTAINER_ENGINE="${CONTAINER_ENGINE:-docker}"
 fi
 
-echo "Building application container image: ${APP_IMAGE}"
-"${CONTAINER_ENGINE}" build -f Containerfile.app -t "${APP_IMAGE}" .
+APP_IMAGE="${REPOBASE}/advancedpolicymanager-app:${IMAGETAG}"
+MODULE_IMAGE="${REPOBASE}/advancedpolicymanager:${IMAGETAG}"
 
-echo "Building NS8 rootless module image: ${MODULE_IMAGE}"
+echo "==> Building application container: ${APP_IMAGE}"
+"${CONTAINER_ENGINE}" build \
+    -f Containerfile.app \
+    -t "${APP_IMAGE}" \
+    .
+
+echo "==> Building NS8 rootless module container: ${MODULE_IMAGE}"
 "${CONTAINER_ENGINE}" build \
     -f Containerfile \
     --build-arg "APP_IMAGE=${APP_IMAGE}" \
     -t "${MODULE_IMAGE}" \
     .
 
-if [[ -n "${CI:-}" && -n "${GITHUB_OUTPUT:-}" ]]; then
-    printf "images=%s,%s\n" "${APP_IMAGE}" "${MODULE_IMAGE}" >> "${GITHUB_OUTPUT}"
+images=("${APP_IMAGE}" "${MODULE_IMAGE}")
+
+if [[ "${TAG_LATEST:-0}" == "1" && "${IMAGETAG}" != "latest" ]]; then
+    APP_LATEST="${REPOBASE}/advancedpolicymanager-app:latest"
+    MODULE_LATEST="${REPOBASE}/advancedpolicymanager:latest"
+
+    echo "==> Tagging latest application container: ${APP_LATEST}"
+    "${CONTAINER_ENGINE}" tag "${APP_IMAGE}" "${APP_LATEST}"
+
+    echo "==> Building latest NS8 module container: ${MODULE_LATEST}"
+    "${CONTAINER_ENGINE}" build \
+        -f Containerfile \
+        --build-arg "APP_IMAGE=${APP_LATEST}" \
+        -t "${MODULE_LATEST}" \
+        .
+
+    images+=("${APP_LATEST}" "${MODULE_LATEST}")
 fi
 
-if [[ "${PUSH_IMAGES:-0}" == "1" ]]; then
-    "${CONTAINER_ENGINE}" push "${APP_IMAGE}"
-    "${CONTAINER_ENGINE}" push "${MODULE_IMAGE}"
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    printf "images=%s\n" "${images[*]}" >> "${GITHUB_OUTPUT}"
+else
+    printf "Built images:\n"
+    for img in "${images[@]}"; do
+        printf "  - %s\n" "${img}"
+    done
 fi
 
-echo "Successfully built:"
-echo "  - ${APP_IMAGE}"
-echo "  - ${MODULE_IMAGE}"
+if [[ "${PUSH:-0}" == "1" || "${PUSH_IMAGES:-0}" == "1" ]]; then
+    for img in "${images[@]}"; do
+        echo "==> Pushing ${img}"
+        "${CONTAINER_ENGINE}" push "${img}"
+    done
+fi

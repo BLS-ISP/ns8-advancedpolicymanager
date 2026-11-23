@@ -6,5 +6,6 @@ imageroot/** text eol=lf
 *.conf text eol=lf
 Containerfile* text eol=lf
 Dockerfile* text eol=lf
+.github/workflows/*.yml text eol=lf
 agent/installers/*.sh text eol=lf
 agent/installers/*.ps1 text eol=crlf

@@ -1,10 +1,13 @@
 [Unit]
 Description=Rootless Advanced Policy Manager service for %u
+Documentation=https://github.com/BLS-ISP/ns8-advancedpolicymanager
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
+Environment=ADVANCEDPOLICYMANAGER_APP_IMAGE=ghcr.io/bls-isp/advancedpolicymanager-app:latest
+EnvironmentFile=-%S/state/agent.env
 EnvironmentFile=%S/state/environment
 WorkingDirectory=%S/state
 Restart=always
