@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+
+import json
+import sys
+import agent
+
+RESTORABLE_ENV_VARS = [
+    "TRAEFIK_HOST",
+    "TRAEFIK_HTTP2HTTPS",
+    "TRAEFIK_LETS_ENCRYPT",
+    "APM_PORT",
+    "APM_DATA_DIR",
+    "APM_STATIC_DIR",
+    "APM_AGENT_ARTIFACTS_DIR",
+    "APM_PUBLIC_URL",
+    "JWT_SECRET",
+    "LDAP_MODE",
+    "LDAP_DOMAIN",
+    "LDAP_SCHEMA",
+    "LDAP_HOST",
+    "LDAP_PORT",
+    "LDAP_TLS",
+    "LDAP_BASE_DN",
+    "LDAP_BIND_DN",
+    "LDAP_BIND_PASSWORD",
+    "ADMIN_GROUPS",
+    "BOOTSTRAP_ADMIN_ENABLED",
+    "BOOTSTRAP_ADMIN_USERNAME",
+    "BOOTSTRAP_ADMIN_PASSWORD_HASH",
+]
+
+request = json.load(sys.stdin)
+original_environment = request.get("environment", {})
+
+for var_name in RESTORABLE_ENV_VARS:
+    if var_name in original_environment:
+        agent.set_env(var_name, str(original_environment[var_name]))
+
+agent.dump_env()

@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+
+import os
+import subprocess
+from pathlib import Path
+import agent
+from agent.ldapproxy import Ldapproxy
+
+
+def str_to_bool(value: str, default: bool = False) -> bool:
+    if value is None or value == "":
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def rewrite_ldap_host(raw_host: str) -> str:
+    cleaned = (raw_host or "").strip()
+    if cleaned in ("127.0.0.1", "localhost"):
+        return "10.0.2.2"
+    return cleaned
+
+
+ldap_domain = os.environ.get("LDAP_DOMAIN", "").strip()
+if ldap_domain:
+    agent.bind_user_domains([ldap_domain])
+    domain_info = Ldapproxy().get_domain(ldap_domain)
+    agent.set_env("LDAP_MODE", "ldapproxy")
+    agent.set_env("LDAP_DOMAIN", ldap_domain)
+    agent.set_env("LDAP_SCHEMA", str(domain_info.get("schema", "ad")))
+    agent.set_env("LDAP_HOST", rewrite_ldap_host(str(domain_info.get("host", "127.0.0.1"))))
+    agent.set_env("LDAP_PORT", str(domain_info.get("port", "")))
+    agent.set_env(
+        "LDAP_TLS",
+        "true"
+        if str(domain_info.get("tls", False)).strip().lower() in ("1", "true", "yes", "on")
+        else "false",
+    )
+    agent.set_env("LDAP_BASE_DN", str(domain_info.get("base_dn", "")))
+    agent.set_env("LDAP_BIND_DN", str(domain_info.get("bind_dn", "")))
+    agent.set_env("LDAP_BIND_PASSWORD", str(domain_info.get("bind_password", "")))
+else:
+    agent.bind_user_domains([])
+
+agent.dump_env()
+
+# Restore SQLite backup into apm-data volume if present
+backup_file = Path(os.environ.get("APM_STATE_BACKUP_FILE", "apm.db.bak"))
+if backup_file.is_file():
+    subprocess.run(
+        ["systemctl", "--user", "stop", "advancedpolicymanager.service"],
+        check=False,
+    )
+    app_image = os.environ["ADVANCEDPOLICYMANAGER_APP_IMAGE"]
+    restore_snippet = (
+        "import pathlib, shutil; "
+        "[pathlib.Path(p).unlink(missing_ok=True) for p in ('/data/apm.db-wal', '/data/apm.db-shm')]; "
+        "shutil.copy2('/restore/apm.db.bak', '/data/apm.db')"
+    )
+    subprocess.run(
+        [
+            "podman",
+            "run",
+            "--rm",
+            "--pull=missing",
+            "-v",
+            "apm-data:/data:Z",
+            "-v",
+            f"{backup_file.resolve()}:/restore/apm.db.bak:ro,Z",
+            "--entrypoint",
+            "python3",
+            app_image,
+            "-c",
+            restore_snippet,
+        ],
+        check=True,
+    )
+    backup_file.unlink(missing_ok=True)
+
+# Re-register Traefik route if host was configured
+host = os.environ.get("TRAEFIK_HOST", "").strip()
+if host:
+    http2https = str_to_bool(os.environ.get("TRAEFIK_HTTP2HTTPS"), default=True)
+    lets_encrypt = str_to_bool(os.environ.get("TRAEFIK_LETS_ENCRYPT"), default=False)
+    default_traefik_id = agent.resolve_agent_id("traefik@node")
+    agent.assert_exp(default_traefik_id is not None)
+    tcp_port = os.environ["TCP_PORT"]
+    response = agent.tasks.run(
+        agent_id=default_traefik_id,
+        action="set-route",
+        data={
+            "instance": os.environ["MODULE_ID"],
+            "url": f"http://127.0.0.1:{tcp_port}",
+            "host": host,
+            "lets_encrypt": lets_encrypt,
+            "http2https": http2https,
+        },
+    )
+    agent.assert_exp(response["exit_code"] == 0)
+
+# Enable and restart service
+subprocess.run(
+    ["systemctl", "--user", "enable", "advancedpolicymanager.service"],
+    check=True,
+)
+subprocess.run(
+    ["systemctl", "--user", "restart", "advancedpolicymanager.service"],
+    check=True,
+)

@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+
+import shlex
+import subprocess
+
+# Default start command: systemctl --user enable --now advancedpolicymanager.service
+SERVICE_NAME = "advancedpolicymanager.service"
+
+is_active = subprocess.run(
+    ["systemctl", "--user", "-q", "is-active", SERVICE_NAME],
+    check=False,
+).returncode == 0
+
+if is_active:
+    subprocess.run(["systemctl", "--user", "enable", SERVICE_NAME], check=True)
+    subprocess.run(["systemctl", "--user", "restart", SERVICE_NAME], check=True)
+else:
+    subprocess.run(
+        shlex.split("systemctl --user enable --now advancedpolicymanager.service"),
+        check=True,
+    )

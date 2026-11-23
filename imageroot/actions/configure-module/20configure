@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+
+import hashlib
+import json
+import os
+import secrets
+import sys
+import agent
+from agent.ldapproxy import Ldapproxy
+
+
+def hash_pbkdf2_password(password: str, iterations: int = 260000) -> str:
+    salt = secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        iterations,
+    ).hex()
+    return f"pbkdf2:sha256:{iterations}${salt}${dk}"
+
+
+def rewrite_ldap_host(raw_host: str) -> str:
+    cleaned = (raw_host or "").strip()
+    if cleaned in ("127.0.0.1", "localhost"):
+        return "10.0.2.2"
+    return cleaned
+
+
+data = json.load(sys.stdin)
+
+host = data["host"].strip()
+http2https = bool(data.get("http2https", True))
+lets_encrypt = bool(data.get("lets_encrypt", False))
+ldap_domain = (data.get("ldap_domain") or "").strip()
+admin_groups = (data.get("admin_groups") or "Domain Admins,admins").strip()
+bootstrap_admin_enabled = bool(data.get("bootstrap_admin_enabled", True))
+bootstrap_admin_username = (data.get("bootstrap_admin_username") or "admin").strip()
+bootstrap_admin_password = data.get("bootstrap_admin_password") or ""
+
+scheme = "https" if (http2https or lets_encrypt) else "http"
+apm_public_url = f"{scheme}://{host}"
+
+if ldap_domain:
+    agent.bind_user_domains([ldap_domain])
+    domain_info = Ldapproxy().get_domain(ldap_domain)
+    ldap_host = rewrite_ldap_host(str(domain_info.get("host", "127.0.0.1")))
+    ldap_port = str(domain_info.get("port", ""))
+    ldap_schema = str(domain_info.get("schema", "ad"))
+    ldap_tls = (
+        "true"
+        if str(domain_info.get("tls", False)).strip().lower() in ("1", "true", "yes", "on")
+        else "false"
+    )
+    ldap_base_dn = str(domain_info.get("base_dn", ""))
+    ldap_bind_dn = str(domain_info.get("bind_dn", ""))
+    ldap_bind_password = str(domain_info.get("bind_password", ""))
+
+    agent.set_env("LDAP_MODE", "ldapproxy")
+    agent.set_env("LDAP_DOMAIN", ldap_domain)
+    agent.set_env("LDAP_SCHEMA", ldap_schema)
+    agent.set_env("LDAP_HOST", ldap_host)
+    agent.set_env("LDAP_PORT", ldap_port)
+    agent.set_env("LDAP_TLS", ldap_tls)
+    agent.set_env("LDAP_BASE_DN", ldap_base_dn)
+    agent.set_env("LDAP_BIND_DN", ldap_bind_dn)
+    agent.set_env("LDAP_BIND_PASSWORD", ldap_bind_password)
+else:
+    agent.bind_user_domains([])
+    agent.set_env("LDAP_MODE", "mock")
+    agent.set_env("LDAP_DOMAIN", "")
+    agent.set_env("LDAP_SCHEMA", "")
+    agent.set_env("LDAP_HOST", "")
+    agent.set_env("LDAP_PORT", "")
+    agent.set_env("LDAP_TLS", "false")
+    agent.set_env("LDAP_BASE_DN", "")
+    agent.set_env("LDAP_BIND_DN", "")
+    agent.set_env("LDAP_BIND_PASSWORD", "")
+
+agent.set_env("TRAEFIK_HOST", host)
+agent.set_env("TRAEFIK_HTTP2HTTPS", "true" if http2https else "false")
+agent.set_env("TRAEFIK_LETS_ENCRYPT", "true" if lets_encrypt else "false")
+agent.set_env("APM_PORT", os.environ.get("APM_PORT", "8080"))
+agent.set_env("APM_DATA_DIR", os.environ.get("APM_DATA_DIR", "/data"))
+agent.set_env("APM_STATIC_DIR", os.environ.get("APM_STATIC_DIR", "/app/web_dist"))
+agent.set_env("APM_AGENT_ARTIFACTS_DIR", os.environ.get("APM_AGENT_ARTIFACTS_DIR", "/app/agent_artifacts"))
+agent.set_env("APM_PUBLIC_URL", apm_public_url)
+
+if not os.environ.get("JWT_SECRET"):
+    agent.set_env("JWT_SECRET", secrets.token_hex(32))
+
+agent.set_env("ADMIN_GROUPS", admin_groups)
+agent.set_env("BOOTSTRAP_ADMIN_ENABLED", "true" if bootstrap_admin_enabled else "false")
+agent.set_env("BOOTSTRAP_ADMIN_USERNAME", bootstrap_admin_username)
+
+if bootstrap_admin_password:
+    agent.set_env("BOOTSTRAP_ADMIN_PASSWORD_HASH", hash_pbkdf2_password(bootstrap_admin_password))
+
+agent.dump_env()
+
+default_traefik_id = agent.resolve_agent_id("traefik@node")
+agent.assert_exp(default_traefik_id is not None)
+tcp_port = os.environ["TCP_PORT"]
+
+response = agent.tasks.run(
+    agent_id=default_traefik_id,
+    action="set-route",
+    data={
+        "instance": os.environ["MODULE_ID"],
+        "url": f"http://127.0.0.1:{tcp_port}",
+        "host": host,
+        "lets_encrypt": lets_encrypt,
+        "http2https": http2https,
+    },
+)
+agent.assert_exp(response["exit_code"] == 0)

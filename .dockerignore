@@ -1,0 +1,13 @@
+.git
+.gitignore
+**/node_modules
+**/__pycache__
+**/*.pyc
+.pytest_cache
+backend/.pytest_cache
+backend/data
+*.db
+*.sqlite3*
+ui/dist
+web/dist
+agent/target

@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+
+import os
+import secrets
+import agent
+
+if not os.environ.get("JWT_SECRET"):
+    agent.set_env("JWT_SECRET", secrets.token_hex(32))
+
+agent.set_env("ADMIN_GROUPS", os.environ.get("ADMIN_GROUPS", "Domain Admins,admins"))
+agent.set_env("BOOTSTRAP_ADMIN_ENABLED", os.environ.get("BOOTSTRAP_ADMIN_ENABLED", "true"))
+agent.set_env("BOOTSTRAP_ADMIN_USERNAME", os.environ.get("BOOTSTRAP_ADMIN_USERNAME", "admin"))
+agent.set_env("APM_PORT", os.environ.get("APM_PORT", "8080"))
+agent.set_env("APM_DATA_DIR", os.environ.get("APM_DATA_DIR", "/data"))
+agent.set_env("APM_STATIC_DIR", os.environ.get("APM_STATIC_DIR", "/app/web_dist"))
+agent.set_env("APM_AGENT_ARTIFACTS_DIR", os.environ.get("APM_AGENT_ARTIFACTS_DIR", "/app/agent_artifacts"))
+agent.set_env("LDAP_MODE", os.environ.get("LDAP_MODE", "mock"))
+agent.set_env("TRAEFIK_HTTP2HTTPS", os.environ.get("TRAEFIK_HTTP2HTTPS", "true"))
+agent.set_env("TRAEFIK_LETS_ENCRYPT", os.environ.get("TRAEFIK_LETS_ENCRYPT", "false"))
+
+agent.dump_env()

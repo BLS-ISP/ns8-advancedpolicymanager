@@ -1,0 +1,35 @@
+[Unit]
+Description=Rootless Advanced Policy Manager service for %u
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+EnvironmentFile=%S/state/environment
+WorkingDirectory=%S/state
+Restart=always
+RestartSec=5
+TimeoutStopSec=70
+ExecStartPre=/bin/rm -f %t/advancedpolicymanager.pid %t/advancedpolicymanager.cid
+ExecStart=/usr/bin/podman run \
+    --conmon-pidfile %t/advancedpolicymanager.pid \
+    --cidfile %t/advancedpolicymanager.cid \
+    --cgroups=no-conmon \
+    --sdnotify=conmon \
+    --replace \
+    -d \
+    --name advancedpolicymanager-app \
+    --pull=missing \
+    --network=slirp4netns:allow_host_loopback=true \
+    -p 127.0.0.1:${TCP_PORT}:8080 \
+    -v apm-data:/data:Z \
+    --env-file=%S/state/environment \
+    ${ADVANCEDPOLICYMANAGER_APP_IMAGE}
+ExecStop=/usr/bin/podman stop --ignore --cidfile %t/advancedpolicymanager.cid -t 10
+ExecStopPost=/usr/bin/podman rm --ignore -f --cidfile %t/advancedpolicymanager.cid
+PIDFile=%t/advancedpolicymanager.pid
+Type=notify
+NotifyAccess=all
+
+[Install]
+WantedBy=default.target

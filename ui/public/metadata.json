@@ -1,0 +1,23 @@
+{
+  "name": "Advanced Policy Manager",
+  "description": {
+    "en": "Centralized policy and configuration management for Windows, Linux, and macOS endpoints with Samba AD and OpenLDAP integration",
+    "de": "Zentrale Richtlinien- und Konfigurationsverwaltung für Windows-, Linux- und macOS-Endgeräte mit Samba-AD- und OpenLDAP-Integration"
+  },
+  "categories": [
+    "security",
+    "system_administration"
+  ],
+  "authors": [
+    {
+      "name": "NethServer Community",
+      "email": "info@nethserver.org"
+    }
+  ],
+  "docs": {
+    "documentation_url": "https://docs.nethserver.org",
+    "bug_url": "https://github.com/NethServer/dev",
+    "code_url": "https://github.com/NethServer/ns8-advancedpolicymanager"
+  },
+  "source": "ghcr.io/nethserver/advancedpolicymanager"
+}

@@ -1,0 +1,48 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Configure Advanced Policy Manager",
+    "$id": "http://schema.nethserver.org/advancedpolicymanager/configure-module.json",
+    "description": "Configure NethServer 8 Advanced Policy Manager module settings",
+    "type": "object",
+    "required": [
+        "host",
+        "http2https",
+        "lets_encrypt"
+    ],
+    "properties": {
+        "host": {
+            "type": "string",
+            "description": "Fully qualified domain name for the Policy Web GUI and Agent API",
+            "format": "idn-hostname",
+            "minLength": 1
+        },
+        "http2https": {
+            "type": "boolean",
+            "description": "Redirect HTTP requests to HTTPS"
+        },
+        "lets_encrypt": {
+            "type": "boolean",
+            "description": "Request a valid Let's Encrypt TLS certificate"
+        },
+        "ldap_domain": {
+            "type": "string",
+            "description": "Bound NS8 User Domain (Samba AD or OpenLDAP)"
+        },
+        "admin_groups": {
+            "type": "string",
+            "description": "Comma-separated LDAP/AD group names granted admin access"
+        },
+        "bootstrap_admin_enabled": {
+            "type": "boolean",
+            "description": "Enable local emergency bootstrap administrator login"
+        },
+        "bootstrap_admin_username": {
+            "type": "string",
+            "description": "Username for the emergency bootstrap administrator"
+        },
+        "bootstrap_admin_password": {
+            "type": "string",
+            "description": "Optional new password for the emergency bootstrap administrator"
+        }
+    }
+}

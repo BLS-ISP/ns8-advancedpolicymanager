@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+
+import json
+import os
+import secrets
+import subprocess
+import sys
+import agent
+from agent.ldapproxy import Ldapproxy
+
+
+def str_to_bool(value: str, default: bool = False) -> bool:
+    if value is None or value == "":
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def rewrite_ldap_host(raw_host: str) -> str:
+    cleaned = (raw_host or "").strip()
+    if cleaned in ("127.0.0.1", "localhost"):
+        return "10.0.2.2"
+    return cleaned
+
+
+raw_stdin = sys.stdin.read().strip()
+request = json.loads(raw_stdin) if raw_stdin else {}
+
+# Generate a fresh JWT_SECRET for the cloned module instance
+agent.set_env("JWT_SECRET", secrets.token_hex(32))
+
+# Re-bind NS8 user domain and refresh ldapproxy connection settings
+ldap_domain = os.environ.get("LDAP_DOMAIN", "").strip()
+if ldap_domain:
+    agent.bind_user_domains([ldap_domain])
+    domain_info = Ldapproxy().get_domain(ldap_domain)
+    agent.set_env("LDAP_MODE", "ldapproxy")
+    agent.set_env("LDAP_DOMAIN", ldap_domain)
+    agent.set_env("LDAP_SCHEMA", str(domain_info.get("schema", "ad")))
+    agent.set_env("LDAP_HOST", rewrite_ldap_host(str(domain_info.get("host", "127.0.0.1"))))
+    agent.set_env("LDAP_PORT", str(domain_info.get("port", "")))
+    agent.set_env(
+        "LDAP_TLS",
+        "true"
+        if str(domain_info.get("tls", False)).strip().lower() in ("1", "true", "yes", "on")
+        else "false",
+    )
+    agent.set_env("LDAP_BASE_DN", str(domain_info.get("base_dn", "")))
+    agent.set_env("LDAP_BIND_DN", str(domain_info.get("bind_dn", "")))
+    agent.set_env("LDAP_BIND_PASSWORD", str(domain_info.get("bind_password", "")))
+else:
+    agent.bind_user_domains([])
+
+clone_host = (request.get("traefik_host") or request.get("host") or "").strip()
+if clone_host:
+    http2https = str_to_bool(os.environ.get("TRAEFIK_HTTP2HTTPS"), default=True)
+    lets_encrypt = str_to_bool(os.environ.get("TRAEFIK_LETS_ENCRYPT"), default=False)
+    scheme = "https" if (http2https or lets_encrypt) else "http"
+    agent.set_env("TRAEFIK_HOST", clone_host)
+    agent.set_env("APM_PUBLIC_URL", f"{scheme}://{clone_host}")
+
+agent.dump_env()
+
+if clone_host:
+    http2https = str_to_bool(os.environ.get("TRAEFIK_HTTP2HTTPS"), default=True)
+    lets_encrypt = str_to_bool(os.environ.get("TRAEFIK_LETS_ENCRYPT"), default=False)
+    default_traefik_id = agent.resolve_agent_id("traefik@node")
+    if default_traefik_id is not None and os.environ.get("TCP_PORT") and os.environ.get("MODULE_ID"):
+        response = agent.tasks.run(
+            agent_id=default_traefik_id,
+            action="set-route",
+            data={
+                "instance": os.environ["MODULE_ID"],
+                "url": f"http://127.0.0.1:{os.environ['TCP_PORT']}",
+                "host": clone_host,
+                "lets_encrypt": lets_encrypt,
+                "http2https": http2https,
+            },
+        )
+        agent.assert_exp(response["exit_code"] == 0)
+
+subprocess.run(
+    ["systemctl", "--user", "enable", "--now", "advancedpolicymanager.service"],
+    check=True,
+)

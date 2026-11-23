@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+
+import json
+import os
+import sys
+from agent.ldapproxy import Ldapproxy
+
+
+def str_to_bool(value: str, default: bool = False) -> bool:
+    if value is None or value == "":
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+host = os.environ.get("TRAEFIK_HOST", "")
+http2https = str_to_bool(os.environ.get("TRAEFIK_HTTP2HTTPS"), default=True)
+lets_encrypt = str_to_bool(os.environ.get("TRAEFIK_LETS_ENCRYPT"), default=False)
+ldap_domain = os.environ.get("LDAP_DOMAIN", "")
+admin_groups = os.environ.get("ADMIN_GROUPS", "Domain Admins,admins")
+bootstrap_admin_enabled = str_to_bool(os.environ.get("BOOTSTRAP_ADMIN_ENABLED"), default=True)
+bootstrap_admin_username = os.environ.get("BOOTSTRAP_ADMIN_USERNAME", "admin")
+
+app_url = os.environ.get("APM_PUBLIC_URL", "")
+if not app_url and host:
+    scheme = "https" if (http2https or lets_encrypt) else "http"
+    app_url = f"{scheme}://{host}"
+
+user_domains = Ldapproxy().get_domains_list()
+
+config = {
+    "host": host,
+    "http2https": http2https,
+    "lets_encrypt": lets_encrypt,
+    "ldap_domain": ldap_domain,
+    "admin_groups": admin_groups,
+    "bootstrap_admin_enabled": bootstrap_admin_enabled,
+    "bootstrap_admin_username": bootstrap_admin_username,
+    "bootstrap_admin_password_configured": bool(os.environ.get("BOOTSTRAP_ADMIN_PASSWORD_HASH", "")),
+    "app_url": app_url,
+    "user_domains": user_domains,
+}
+
+json.dump(config, fp=sys.stdout)

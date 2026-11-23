@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+
+import json
+import os
+import subprocess
+import sys
+import agent
+from agent.ldapproxy import Ldapproxy
+
+
+def rewrite_ldap_host(raw_host: str) -> str:
+    cleaned = (raw_host or "").strip()
+    if cleaned in ("127.0.0.1", "localhost"):
+        return "10.0.2.2"
+    return cleaned
+
+
+raw_stdin = sys.stdin.read().strip()
+event_data = json.loads(raw_stdin) if raw_stdin else {}
+
+ldap_domain = os.environ.get("LDAP_DOMAIN", "").strip()
+if not ldap_domain:
+    sys.exit(0)
+
+changed_domain = (event_data.get("domain") or "").strip()
+if changed_domain and changed_domain != ldap_domain:
+    sys.exit(0)
+
+domain_info = Ldapproxy().get_domain(ldap_domain)
+
+agent.set_env("LDAP_MODE", "ldapproxy")
+agent.set_env("LDAP_DOMAIN", ldap_domain)
+agent.set_env("LDAP_SCHEMA", str(domain_info.get("schema", "ad")))
+agent.set_env("LDAP_HOST", rewrite_ldap_host(str(domain_info.get("host", "127.0.0.1"))))
+agent.set_env("LDAP_PORT", str(domain_info.get("port", "")))
+agent.set_env(
+    "LDAP_TLS",
+    "true"
+    if str(domain_info.get("tls", False)).strip().lower() in ("1", "true", "yes", "on")
+    else "false",
+)
+agent.set_env("LDAP_BASE_DN", str(domain_info.get("base_dn", "")))
+agent.set_env("LDAP_BIND_DN", str(domain_info.get("bind_dn", "")))
+agent.set_env("LDAP_BIND_PASSWORD", str(domain_info.get("bind_password", "")))
+
+agent.dump_env()
+
+is_active = subprocess.run(
+    ["systemctl", "--user", "-q", "is-active", "advancedpolicymanager.service"],
+    check=False,
+).returncode == 0
+
+if is_active:
+    subprocess.run(
+        ["systemctl", "--user", "restart", "advancedpolicymanager.service"],
+        check=True,
+    )

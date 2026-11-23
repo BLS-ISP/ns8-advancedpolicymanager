@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+
+import os
+from pathlib import Path
+
+backup_path = Path(os.environ.get("APM_STATE_BACKUP_FILE", "apm.db.bak"))
+backup_path.unlink(missing_ok=True)
